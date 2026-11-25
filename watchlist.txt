@@ -1,0 +1,7 @@
+# Add channels or direct stream links here (one per line):
+# youtube:@Mythpat
+# youtube:@LiveInsaan
+# youtube:@TechnoGamerzOfficial
+# youtube:@IShowSpeed
+# https://www.youtube.com/watch?v=VIDEO_ID
+https://www.youtube.com/live/91c96JtcIFg

@@ -1,0 +1,12 @@
+﻿telegram_config.json
+PAUSE.flag
+data/
+READY_TO_POST/
+SENT_TO_TELEGRAM/
+__pycache__/
+*.py[cod]
+*.bak
+.venv/
+.streamclips/
+venv/
+env/
