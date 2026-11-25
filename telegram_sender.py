@@ -1,6 +1,7 @@
 ﻿import datetime
 import html
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -15,6 +16,7 @@ SENT_DIR       = D_ROOT / "SENT_TO_TELEGRAM"
 CONFIG_FILE    = D_ROOT / "telegram_config.json"
 PAUSE_FLAG     = D_ROOT / "PAUSE.flag"
 WATCHLIST_FILE = D_ROOT / "watchlist.txt"
+FACTORY_SCRIPT = D_ROOT / "auto_clip_factory.py"
 PYTHON_EXE     = pathlib.Path(r"C:\Users\shubh\AppData\Local\Programs\Python\Python312\python.exe")
 
 SEND_DELAY_SECONDS = 5
@@ -39,36 +41,22 @@ def load_config() -> dict:
     except Exception:
         return {}
 
-def find_factory_target():
-    preferred_bats = [
-        D_ROOT / "Start_24x7_Factory.bat",
-        D_ROOT / "Start_Factory.bat",
-        D_ROOT / "Start_Clipper.bat",
-    ]
-    for b in preferred_bats:
-        if b.exists():
-            return ("bat", b)
-    for b in sorted(D_ROOT.glob("*.bat")):
-        low = b.name.lower()
-        if "telegram" not in low and "pause" not in low:
-            return ("bat", b)
-    preferred_pys = [
-        D_ROOT / "auto_clip_factory.py",
-        D_ROOT / "clip_factory.py",
-        D_ROOT / "streamclips.py",
-    ]
-    for p in preferred_pys:
-        if p.exists():
-            return ("py", p)
-    for p in sorted(D_ROOT.glob("*.py")):
-        if p.name.lower() != "telegram_sender.py":
-            return ("py", p)
-    return (None, None)
+def _rewind_files(files):
+    if not files:
+        return
+    for _, fobj in files.items():
+        if isinstance(fobj, tuple) and len(fobj) >= 2 and hasattr(fobj[1], "seek"):
+            try:
+                fobj[1].seek(0)
+            except Exception:
+                pass
 
 def tg_call(bot_token: str, method: str, data: dict = None, files=None, timeout: int = 180) -> dict:
     import requests
     url = f"https://api.telegram.org/bot{bot_token}/{method}"
+    net_attempts = 0
     while True:
+        _rewind_files(files)
         try:
             resp = requests.post(url, data=data or {}, files=files, timeout=timeout)
             if resp.status_code == 413:
@@ -81,23 +69,22 @@ def tg_call(bot_token: str, method: str, data: dict = None, files=None, timeout:
                 wait_s = int(retry_after) + 2
                 log(f"Rate limit hit. Waiting {wait_s}s...")
                 time.sleep(wait_s)
-                if files:
-                    for _, fobj in files.items():
-                        if isinstance(fobj, tuple) and len(fobj) >= 2 and hasattr(fobj[1], "seek"):
-                            fobj[1].seek(0)
                 continue
             log(f"Telegram API warning ({method}): {payload}")
             return payload
         except Exception as e:
-            log(f"Telegram network warning ({method}): {e}")
+            net_attempts += 1
+            log(f"Telegram network warning ({method}) [attempt {net_attempts}]: {e}")
+            if files and net_attempts >= 2:
+                return {"ok": False, "error_code": 413, "description": f"Upload interrupted: {e}"}
             time.sleep(5)
 
 def is_factory_running() -> bool:
     try:
         ps = (
             "foreach ($p in Get-CimInstance Win32_Process) { "
-            "if ($p.CommandLine -like '*auto_clip_factory*' -or $p.CommandLine -like '*streamclips*') { "
-            "if ($p.CommandLine -notlike '*telegram_sender*') { $p.ProcessId } } }"
+            "if ($p.CommandLine -like '*auto_clip_factory.py*' -or $p.CommandLine -like '*streamclips.py*') { "
+            "if ($p.CommandLine -notlike '*telegram_sender.py*') { $p.ProcessId } } }"
         )
         out = subprocess.check_output(
             ["powershell", "-NoProfile", "-Command", ps],
@@ -112,34 +99,24 @@ def start_factory_process() -> str:
         PAUSE_FLAG.unlink(missing_ok=True)
     if is_factory_running():
         return "▶️ <b>Resumed!</b> Clipping factory is running."
-
-    kind, target = find_factory_target()
-    if kind == "bat" and target:
-        subprocess.Popen(
-            ["cmd.exe", "/k", str(target)],
-            cwd=str(D_ROOT),
-            creationflags=subprocess.CREATE_NEW_CONSOLE,
-        )
-        time.sleep(1.5)
-        return f"🚀 <b>Started!</b> Opened <code>{html.escape(target.name)}</code> on your laptop."
-    elif kind == "py" and target:
+    if FACTORY_SCRIPT.exists():
         py_bin = str(PYTHON_EXE) if PYTHON_EXE.exists() else sys.executable
         subprocess.Popen(
-            [py_bin, str(target)],
+            [py_bin, str(FACTORY_SCRIPT)],
             cwd=str(D_ROOT),
             creationflags=subprocess.CREATE_NEW_CONSOLE,
         )
         time.sleep(1.5)
-        return f"🚀 <b>Started!</b> Opened <code>{html.escape(target.name)}</code> on your laptop."
-    return "⚠️ Cleared <code>PAUSE.flag</code>, but no factory script was found."
+        return "🚀 <b>Started!</b> Opened <code>auto_clip_factory.py</code> on your laptop."
+    return "⚠️ Cleared <code>PAUSE.flag</code>, but <code>auto_clip_factory.py</code> was not found."
 
 def stop_factory_process() -> str:
     PAUSE_FLAG.write_text("STOPPED_FROM_TELEGRAM\n", encoding="utf-8")
     try:
         ps = (
             "foreach ($p in Get-CimInstance Win32_Process) { "
-            "if ($p.CommandLine -like '*auto_clip_factory*' -or $p.CommandLine -like '*streamclips*' -or $p.CommandLine -like '*Start_24x7_Factory*') { "
-            "if ($p.CommandLine -notlike '*telegram_sender*') { "
+            "if ($p.CommandLine -like '*auto_clip_factory.py*' -or $p.CommandLine -like '*streamclips.py*') { "
+            "if ($p.CommandLine -notlike '*telegram_sender.py*') { "
             "Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue } } }"
         )
         subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=False, timeout=15)
@@ -165,7 +142,7 @@ def build_menu_markup() -> str:
 def send_status_message(bot_token: str, chat_id: str, prefix: str = ""):
     paused = PAUSE_FLAG.exists()
     running = is_factory_running()
-    ready_count = len(list(READY_DIR.glob("*.mp4"))) if READY_DIR.exists() else 0
+    ready_count = len([p for p in READY_DIR.glob("*.mp4") if not p.name.endswith("_tgdoc.mp4")]) if READY_DIR.exists() else 0
     sent_count = len(list(SENT_DIR.glob("*.mp4"))) if SENT_DIR.exists() else 0
     _, _, free_b = shutil.disk_usage("D:\\")
     free_gb = free_b / (1024 ** 3)
@@ -315,20 +292,36 @@ def parse_sidecar_txt(txt_path: pathlib.Path, fallback_stem: str) -> dict:
         "description": description[:4500],
     }
 
-def shrink_to_doc_limit(src_mp4: pathlib.Path, target_mb: float = 47.0) -> pathlib.Path:
+def find_ffmpeg_bin() -> str:
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    local_app = pathlib.Path(os.environ.get("LOCALAPPDATA", ""))
+    for p in local_app.rglob("ffmpeg.exe"):
+        return str(p)
+    return "ffmpeg"
+
+def get_video_duration(ffmpeg_bin: str, src_mp4: pathlib.Path) -> float:
     probe = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(src_mp4)],
-        capture_output=True, text=True, check=False
+        [ffmpeg_bin, "-i", str(src_mp4)],
+        capture_output=True, text=True, errors="replace", check=False
     )
-    dur = float(probe.stdout.strip() or 60.0)
-    total_kbps = max(800, int((target_mb * 8192) / max(dur, 1.0)))
-    video_kbps = max(650, total_kbps - 128)
+    m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", probe.stderr)
+    if m:
+        return int(m.group(1)) * 3600.0 + int(m.group(2)) * 60.0 + float(m.group(3))
+    return 75.0
+
+def shrink_to_doc_limit(src_mp4: pathlib.Path, target_mb: float = 45.0) -> pathlib.Path:
+    ffmpeg_bin = find_ffmpeg_bin()
+    dur = get_video_duration(ffmpeg_bin, src_mp4)
+    total_kbps = max(650, int((target_mb * 8192) / max(dur, 1.0)))
+    video_kbps = max(500, total_kbps - 128)
     tmp_out = src_mp4.with_name(src_mp4.stem + "_tgdoc.mp4")
     subprocess.run(
         [
-            "ffmpeg", "-y", "-i", str(src_mp4),
-            "-c:v", "libx264", "-b:v", f"{video_kbps}k", "-maxrate", f"{int(video_kbps*1.2)}k",
-            "-bufsize", f"{video_kbps*2}k", "-preset", "veryfast",
+            ffmpeg_bin, "-y", "-i", str(src_mp4),
+            "-c:v", "libx264", "-b:v", f"{video_kbps}k", "-maxrate", f"{int(video_kbps * 1.15)}k",
+            "-bufsize", f"{video_kbps * 2}k", "-preset", "veryfast",
             "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
             str(tmp_out),
         ],
@@ -348,7 +341,7 @@ def send_clip_to_telegram(bot_token: str, chat_id: str, mp4_path: pathlib.Path, 
         f"<pre>{esc_desc}</pre>"
     )
 
-    if size_mb <= 49.5:
+    if size_mb <= 48.5:
         with open(mp4_path, "rb") as f:
             if len(full_caption) <= 1024:
                 res = tg_call(
@@ -393,39 +386,26 @@ def send_clip_to_telegram(bot_token: str, chat_id: str, mp4_path: pathlib.Path, 
             raise RuntimeError(f"sendVideo failed: {res}")
         return
 
-    log(f"Clip is {size_mb:.1f} MB (>50 MB video limit) -> sending as Telegram Document file...")
-    doc_caption = f"📁 <b>HD DOCUMENT ({size_mb:.1f} MB) | TITLE:</b>\n<code>{esc_title}</code>"
-    with open(mp4_path, "rb") as f:
-        res = tg_call(
-            bot_token,
-            "sendDocument",
-            data={
-                "chat_id": chat_id,
-                "caption": doc_caption[:1024],
-                "parse_mode": "HTML",
-            },
-            files={"document": (mp4_path.name, f, "application/octet-stream")},
-            timeout=360,
-        )
+    log(f"Clip is {size_mb:.1f} MB (>50 MB Telegram Bot API cap) -> fitting to ~45 MB Document (keeping original on D:)...")
+    tmp_doc = shrink_to_doc_limit(mp4_path, target_mb=45.0)
+    doc_mb = tmp_doc.stat().st_size / (1024 * 1024)
+    doc_caption = f"📁 <b>HD DOCUMENT ({doc_mb:.1f} MB) | TITLE:</b>\n<code>{esc_title}</code>"
 
-    if not res.get("ok") and res.get("error_code") == 413:
-        log("Telegram Bot API 50 MB upload ceiling hit; encoding 1080p Document under 48 MB...")
-        tmp_doc = shrink_to_doc_limit(mp4_path, target_mb=47.0)
-        try:
-            with open(tmp_doc, "rb") as f:
-                res = tg_call(
-                    bot_token,
-                    "sendDocument",
-                    data={
-                        "chat_id": chat_id,
-                        "caption": doc_caption[:1024],
-                        "parse_mode": "HTML",
-                    },
-                    files={"document": (mp4_path.name, f, "application/octet-stream")},
-                    timeout=360,
-                )
-        finally:
-            tmp_doc.unlink(missing_ok=True)
+    try:
+        with open(tmp_doc, "rb") as f:
+            res = tg_call(
+                bot_token,
+                "sendDocument",
+                data={
+                    "chat_id": chat_id,
+                    "caption": doc_caption[:1024],
+                    "parse_mode": "HTML",
+                },
+                files={"document": (mp4_path.name, f, "application/octet-stream")},
+                timeout=360,
+            )
+    finally:
+        tmp_doc.unlink(missing_ok=True)
 
     if not res.get("ok"):
         raise RuntimeError(f"sendDocument failed: {res}")
