@@ -13,25 +13,14 @@ if not exist "%SCRIPT%" (
     exit /b 1
 )
 
-powershell -NoProfile -Command "$p = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*local_clip_factory.py*' }; if ($p) { exit 0 } else { exit 1 }"
-if "%errorlevel%"=="0" (
-    if exist "%FLAG%" (
-        del /f /q "%FLAG%"
-        echo ==================================================
-        echo   RESUMED - Local Clip Factory is active again!
-        echo ==================================================
-    ) else (
-        echo PAUSED > "%FLAG%"
-        echo ==================================================
-        echo   PAUSED - Local Clip Factory is now on hold.
-        echo   Double-click Start_Local_Mode.bat again to resume.
-        echo ==================================================
-    )
-    pause
-    exit /b 0
-)
-
 if exist "%FLAG%" del /f /q "%FLAG%"
+
+echo ==================================================
+echo   STARTING MODE 2 - LOCAL-ONLY STREAM CLIP FACTORY
+echo   Saving clips to: "%ROOT%\LOCAL_CLIPS"
+echo   Press Ctrl+C anytime to stop.
+echo ==================================================
+echo.
 
 if exist "%PYEXE%" (
     "%PYEXE%" "%SCRIPT%"
