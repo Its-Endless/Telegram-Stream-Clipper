@@ -1,0 +1,22 @@
+@echo off
+title Mode 3 - Paste Link & Save Clips Locally
+set "ROOT=D:\Automation Youtube Clipping"
+set "SCRIPT=%ROOT%\manual_local_clipper.py"
+set "PYEXE=C:\Users\shubh\AppData\Local\Programs\Python\Python312\python.exe"
+
+cd /d "%ROOT%"
+
+if not exist "%SCRIPT%" (
+    echo [ERROR] Missing file: "%SCRIPT%"
+    pause
+    exit /b 1
+)
+
+if exist "%PYEXE%" (
+    "%PYEXE%" "%SCRIPT%"
+) else (
+    py -3.12 "%SCRIPT%" || python "%SCRIPT%"
+)
+
+echo.
+pause
