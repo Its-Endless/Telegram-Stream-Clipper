@@ -5,3 +5,4 @@
 # youtube:@IShowSpeed
 # https://www.youtube.com/watch?v=VIDEO_ID
 https://www.youtube.com/live/91c96JtcIFg
+https://www.youtube.com/live/G0jjWKit0Mc?si=8bMNr2OzX5YJ7jYE

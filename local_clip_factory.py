@@ -11,10 +11,10 @@ import time
 TEXT_MODE  = "RELATABLE"  # "RELATABLE" or "NONE"
 D_ROOT     = pathlib.Path(r"D:\Automation Youtube Clipping")
 BASE       = D_ROOT / "data"
-READY_DIR  = D_ROOT / "READY_TO_POST"
+LOCAL_DIR  = D_ROOT / "LOCAL_CLIPS"
 WATCHLIST  = D_ROOT / "watchlist.txt"
-HISTORY    = BASE / "history.json"
-PAUSE_FLAG = D_ROOT / "PAUSE.flag"
+HISTORY    = BASE / "local_history.json"
+PAUSE_FLAG = D_ROOT / "LOCAL_PAUSE.flag"
 HOME_SC    = pathlib.Path.home() / "StreamClips"
 SETTINGS_F = HOME_SC / "settings.json"
 
@@ -41,13 +41,7 @@ def log(msg: str):
 
 def ensure_valid_settings():
     HOME_SC.mkdir(parents=True, exist_ok=True)
-    clean_cfg = {
-        "min_score": 71,
-        "clips": 20,
-        "language": "en",
-        "min_len": 30,
-        "max_len": 90,
-    }
+    clean_cfg = {"min_score": 71, "clips": 20, "language": "en", "min_len": 30, "max_len": 90}
     if SETTINGS_F.exists():
         try:
             raw = SETTINGS_F.read_text(encoding="utf-8-sig").strip()
@@ -71,12 +65,11 @@ def has_ytdlp(py_exe: str) -> bool:
 
 def find_skill_path() -> pathlib.Path:
     home = pathlib.Path.home()
-    candidates = [
+    for p in [
         D_ROOT / "engine" / "scripts" / "streamclips.py",
         home / ".gemini" / "skills" / "stream-clips" / "scripts" / "streamclips.py",
         home / "StreamClips" / "scripts" / "streamclips.py",
-    ]
-    for p in candidates:
+    ]:
         if p.exists():
             return p
     hits = list(D_ROOT.rglob("streamclips.py"))
@@ -114,10 +107,10 @@ def sleep_with_pause(seconds: int):
     end_t = time.time() + max(0, seconds)
     while True:
         if PAUSE_FLAG.exists():
-            log("PAUSED (PAUSE.flag active). Run Pause_Play.bat or tap Start in Telegram to resume...")
+            log("PAUSED (PAUSE.flag active). Double-click Start_Local_Mode.bat again to resume...")
             while PAUSE_FLAG.exists():
                 time.sleep(2)
-            log("RESUMED! Factory is active again.")
+            log("RESUMED! Local Clip Factory is active again.")
         rem = end_t - time.time()
         if rem <= 0:
             break
@@ -154,14 +147,7 @@ def save_history(data: dict):
 
 def ensure_watchlist():
     if not WATCHLIST.exists():
-        WATCHLIST.write_text(
-            "# Add channels or direct stream links here (one per line):\n"
-            "# youtube:@Mythpat\n"
-            "# youtube:@LiveInsaan\n"
-            "# youtube:@TechnoGamerzOfficial\n"
-            "# youtube:@IShowSpeed\n",
-            encoding="utf-8",
-        )
+        WATCHLIST.write_text("# Add YouTube @handles or stream URLs (one per line):\n", encoding="utf-8")
 
 def get_watchlist_entries():
     ensure_watchlist()
@@ -191,26 +177,14 @@ def make_relatable_title(creator: str, vcontext: str, vb: float, cb: float, idx:
         return ""
     who = creator.strip() if creator and creator.lower() not in ("creator", "na") else vcontext
     if vb >= 7.0 or cb >= 2.0:
-        pool = [
-            f"{who} Lost His Mind in {vcontext}!",
-            f"{who} Insane {vcontext} Reaction!",
-            f"Unbelievable {vcontext} Moment by {who}!",
-            f"{who} Could Not Believe This in {vcontext}!",
-        ]
+        pool = [f"{who} Lost His Mind in {vcontext}!", f"{who} Insane {vcontext} Reaction!",
+                f"Unbelievable {vcontext} Moment by {who}!", f"{who} Could Not Believe This in {vcontext}!"]
     elif vb >= 4.0:
-        pool = [
-            f"{who} Crazy {vcontext} Gameplay!",
-            f"{who} Funny {vcontext} Moment!",
-            f"Watch {who} Go Wild in {vcontext}!",
-            f"{who} Best {vcontext} Highlight!",
-        ]
+        pool = [f"{who} Crazy {vcontext} Gameplay!", f"{who} Funny {vcontext} Moment!",
+                f"Watch {who} Go Wild in {vcontext}!", f"{who} Best {vcontext} Highlight!"]
     else:
-        pool = [
-            f"{who} {vcontext} Highlight!",
-            f"{who} Epic {vcontext} Clip!",
-            f"{who} Playing {vcontext}!",
-            f"{who} Viral {vcontext} Moment!",
-        ]
+        pool = [f"{who} {vcontext} Highlight!", f"{who} Epic {vcontext} Clip!",
+                f"{who} Playing {vcontext}!", f"{who} Viral {vcontext} Moment!"]
     return pool[idx % len(pool)][:58]
 
 def score_part(pf: pathlib.Path, creator: str, vcontext: str, total_parts: int, p_idx: int):
@@ -255,15 +229,12 @@ def score_part(pf: pathlib.Path, creator: str, vcontext: str, total_parts: int, 
         hype = len(words & HYPE_WORDS) + q.count("!") + q.count("?")
         bonus = 4 if (total_parts > 1 and p_idx >= total_parts // 3) else 0
         sc = int(min(99, max(45, 50 + vb * 2.4 + (cb - 1.0) * 4.8 + hype * 2.2 + bonus)))
-
         if sc <= 70:
             continue
-
         engagement = min(1.0, max(0.0, (sc - 70) / 28.0))
         dur = round(30.0 + engagement * 60.0, 1)
         lead_in = 6.0 if dur >= 50.0 else 4.0
         st = max(10.0, sec - lead_in)
-
         cands.append({
             "start": round(st, 1),
             "end": round(st + dur, 1),
@@ -298,14 +269,7 @@ def resolve_prompts(prompt_paths, creator: str, vcontext: str):
         af.write_text(json.dumps(picks, indent=2, ensure_ascii=False), encoding="utf-8")
 
 def run_sc(cmd):
-    p = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
     out = []
     for line in p.stdout:
         print(line, end="", flush=True)
@@ -314,13 +278,8 @@ def run_sc(cmd):
     return p.returncode, out
 
 def ytdlp_direct_search(query: str, clipped_ids: dict, max_results: int = 12):
-    cmd = [
-        SC_PYTHON, "-m", "yt_dlp",
-        "--flat-playlist",
-        "--no-warnings",
-        "--print", "%(id)s\t%(duration)s\t%(channel,uploader)s\t%(title)s",
-        f"ytsearch{max_results}:{query}",
-    ]
+    cmd = [SC_PYTHON, "-m", "yt_dlp", "--flat-playlist", "--no-warnings",
+           "--print", "%(id)s\t%(duration)s\t%(channel,uploader)s\t%(title)s", f"ytsearch{max_results}:{query}"]
     res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     found = []
     for line in res.stdout.splitlines():
@@ -348,14 +307,9 @@ def find_unclipped(topic: str, keywords: str, when: str, raw_query: str, clipped
         if vid not in clipped_ids and vid not in seen:
             seen.add(vid)
             found.append((vid, url, "Watchlist", url))
-
     for handle in w_handles[:4]:
-        cmd = [
-            SC_PYTHON, "-m", "yt_dlp",
-            "--flat-playlist", "--playlist-end", "4", "--no-warnings",
-            "--print", "%(id)s\t%(duration)s\t%(channel,uploader)s\t%(title)s",
-            f"https://www.youtube.com/{handle}/streams",
-        ]
+        cmd = [SC_PYTHON, "-m", "yt_dlp", "--flat-playlist", "--playlist-end", "4", "--no-warnings",
+               "--print", "%(id)s\t%(duration)s\t%(channel,uploader)s\t%(title)s", f"https://www.youtube.com/{handle}/streams"]
         res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
         for line in res.stdout.splitlines():
             parts = line.split("\t")
@@ -369,10 +323,8 @@ def find_unclipped(topic: str, keywords: str, when: str, raw_query: str, clipped
                     seen.add(vid)
                     clean_ch = handle if ch in ("", "NA", "None") else ch
                     found.append((vid, f"https://www.youtube.com/watch?v={vid}", clean_ch, f"{clean_ch} - {ttl}"))
-
     if found:
         return found
-
     if SKILL.exists():
         cmd = [SC_PYTHON, str(SKILL), "find", "--topic", topic, "--keywords", keywords, "--when", when]
         res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
@@ -391,26 +343,19 @@ def find_unclipped(topic: str, keywords: str, when: str, raw_query: str, clipped
                         raw_name = re.sub(r"^\d+\.\s+", "", label)
                         creator = re.split(r"\s{2,}", raw_name)[0].strip() if raw_name else "Creator"
                         found.append((vid, url, creator, label or url))
-
     if not found:
-        log(f"Running direct YouTube stream search for '{raw_query}'...")
         for item in ytdlp_direct_search(raw_query, clipped_ids):
             if item[0] not in seen:
                 seen.add(item[0])
                 found.append(item)
-
     return found
 
 def stage_all_ready_clips(out_dir: pathlib.Path, url: str, creator: str, orig_title: str, topic: str) -> int:
-    READY_DIR.mkdir(parents=True, exist_ok=True)
+    LOCAL_DIR.mkdir(parents=True, exist_ok=True)
     cj = out_dir / "clips.json"
     raw = json.loads(cj.read_text(encoding="utf-8")) if cj.exists() else {}
     clips = raw if isinstance(raw, list) else raw.get("clips", [])
-    meta_by_file = {}
-    for c in clips:
-        fn = c.get("file") or c.get("filename")
-        if fn:
-            meta_by_file[fn] = c
+    meta_by_file = {c.get("file") or c.get("filename"): c for c in clips if (c.get("file") or c.get("filename"))}
 
     safe_creator = re.sub(r"[^A-Za-z0-9_-]", "", creator) or "Creator"
     ctag = f"#{safe_creator}"
@@ -422,9 +367,10 @@ def stage_all_ready_clips(out_dir: pathlib.Path, url: str, creator: str, orig_ti
         score = float(c.get("score", 75))
         if score <= 70:
             continue
-
         stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        dest_mp4 = READY_DIR / f"{stamp}_{safe_creator}_{mp4_path.name}"
+        creator_dir = LOCAL_DIR / safe_creator
+        creator_dir.mkdir(parents=True, exist_ok=True)
+        dest_mp4 = creator_dir / f"{stamp}_{mp4_path.name}"
         shutil.copy2(mp4_path, dest_mp4)
 
         title = (c.get("title") or f"{creator} {topic} Highlight!").strip()[:60]
@@ -447,28 +393,19 @@ def stage_all_ready_clips(out_dir: pathlib.Path, url: str, creator: str, orig_ti
             "------------------------------------------------------------",
         ])
         dest_mp4.with_suffix(".txt").write_text(post_txt, encoding="utf-8")
-        log(f"READY TO POST (Score {int(score)}): {dest_mp4.name}")
+        log(f"SAVED LOCALLY (Score {int(score)}): {dest_mp4.name}")
         staged += 1
         time.sleep(1)
-
     return staged
 
 def process_one_stream(vid: str, url: str, creator_hint: str, label: str, topic: str) -> int:
     if not SKILL.exists():
         log(f"[ERROR] Cannot find streamclips.py at {SKILL}")
         return 0
-
     ensure_valid_settings()
     t0 = time.time() - 2.0
-    cmd = [
-        SC_PYTHON, str(SKILL), "clip", url,
-        "--topic", topic,
-        "--layout", "stack",
-        "--clips", "20",
-        "--min", "30", "--max", "90",
-        "--language", "en",
-        "--fast", "--brain", "agent",
-    ]
+    cmd = [SC_PYTHON, str(SKILL), "clip", url, "--topic", topic, "--layout", "stack",
+           "--clips", "20", "--min", "30", "--max", "90", "--language", "en", "--fast", "--brain", "agent"]
     rc, lines1 = run_sc(cmd + ["--repick"])
     if rc not in (0, 3):
         rc, lines1 = run_sc(cmd + ["--repick", "--cookies", "chrome"])
@@ -488,9 +425,8 @@ def process_one_stream(vid: str, url: str, creator_hint: str, label: str, topic:
     resolve_prompts(prompt_paths, creator, topic)
     run_sc(cmd)
 
-    search_roots = [d for d in [BASE, HOME_SC] if d.exists()]
     jsons = []
-    for sroot in search_roots:
+    for sroot in [d for d in [BASE, HOME_SC] if d.exists()]:
         for p in sroot.rglob("clips.json"):
             if p.stat().st_mtime >= t0:
                 jsons.append(p)
@@ -502,21 +438,17 @@ def process_one_stream(vid: str, url: str, creator_hint: str, label: str, topic:
         if staged > 0:
             total_staged += staged
             break
-
     clean_bloat()
     return total_staged
 
 def main():
     clean_bloat()
     ensure_watchlist()
-    READY_DIR.mkdir(parents=True, exist_ok=True)
+    LOCAL_DIR.mkdir(parents=True, exist_ok=True)
     ensure_environment()
     print("=" * 68)
-    print("  24/7 STREAM CLIP FACTORY (SCORE > 70 | 30-90s | FULL STREAM)")
-    print(f"  Engine:       {SKILL}")
-    print(f"  Python:       {SC_PYTHON}")
-    print(f"  Output Queue: {READY_DIR}")
-    print("  Control:      Pause_Play.bat or Telegram Bot Remote")
+    print("  MODE 2: 24/7 LOCAL-ONLY STREAM CLIP FACTORY (SAVES TO DISK ONLY)")
+    print(f"  Local Folder: {LOCAL_DIR} (Offline / No Upload)")
     print("=" * 68)
 
     rot_idx = 0
@@ -525,49 +457,35 @@ def main():
             sleep_with_pause(0)
             topic, keywords, when, raw_query = SEARCH_ROTATION[rot_idx % len(SEARCH_ROTATION)]
             rot_idx += 1
-
             history = load_history()
             clipped_ids = history.setdefault("clipped_videos", {})
-            log(f"Searching unclipped '{topic}' streams ({when})...")
             candidates = find_unclipped(topic, keywords, when, raw_query, clipped_ids)
-
             if not candidates:
-                log(f"No fresh '{topic}' ({when}) streams - checking next topic...")
                 sleep_with_pause(10)
                 continue
-
-            log(f"Found {len(candidates)} candidate stream(s) for '{topic}'!")
             for vid, url, creator_hint, label in candidates:
                 sleep_with_pause(0)
-                log(f"Processing stream: {creator_hint} | {label}")
-
                 staged_count = 0
                 try:
                     staged_count = process_one_stream(vid, url, creator_hint, label, topic)
                 except Exception as e:
-                    log(f"[ERROR] {vid}: {e} - cleaning cache & skipping...")
+                    log(f"[ERROR] {vid}: {e}")
                     clean_bloat()
-
                 if staged_count > 0:
                     history = load_history()
                     history.setdefault("clipped_videos", {})[vid] = {
-                        "url": url,
-                        "creator": creator_hint,
-                        "title": label,
+                        "url": url, "creator": creator_hint, "title": label,
                         "clips_created": staged_count,
                         "clipped_at": datetime.datetime.now().isoformat(timespec="seconds"),
                         "success": True,
                     }
                     save_history(history)
-                    log(f"Finished {vid}: {staged_count} clip(s) (score > 70) queued for Telegram!")
                     sleep_with_pause(5)
                 else:
-                    log(f"Skipped {vid} (no clips scored > 70). Moving to next stream...")
                     sleep_with_pause(5)
-
     except KeyboardInterrupt:
         clean_bloat()
-        log("Stopped by user. All temporary cache files cleaned.")
+        log("Stopped by user.")
 
 if __name__ == "__main__":
     main()

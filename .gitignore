@@ -1,8 +1,10 @@
 ﻿telegram_config.json
 PAUSE.flag
+LOCAL_PAUSE.flag
 data/
 READY_TO_POST/
 SENT_TO_TELEGRAM/
+LOCAL_CLIPS/
 __pycache__/
 *.py[cod]
 *.bak
